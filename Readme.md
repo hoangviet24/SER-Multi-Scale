@@ -1,4 +1,6 @@
- 
+[![Build Status](https://github.com/hoangviet24/SER-Multi-Scale-Temporal-Transformer/actions/workflows/python.yml/badge.svg)](https://github.com/hoangviet24/SER-Multi-Scale-Temporal-Transformer/actions)
+
+
 # Transformer Thời gian Đa tỷ lệ cho Nhận diện Cảm xúc qua Giọng nói
 # Tóm tắt
 Nhận diện cảm xúc qua giọng nói đóng vai trò quan trọng trong các hệ thống tương tác người-máy. Gần đây, nhiều mô hình Transformer tối ưu hóa đã được áp dụng thành công cho nhận diện cảm xúc qua giọng nói. Tuy nhiên, các kiến trúc Transformer hiện tại tập trung nhiều vào thông tin toàn cục và đòi hỏi lượng tính toán lớn. Mặt khác, các biểu diễn cảm xúc trong giọng nói tồn tại cục bộ ở nhiều phần khác nhau của đoạn giọng nói đầu vào. Để giải quyết những vấn đề này, chúng tôi đề xuất một Transformer Đa tỷ lệ (MSTR) cho nhận diện cảm xúc qua giọng nói. Mô hình bao gồm ba thành phần chính: (1) một toán tử đặc trưng thời gian đa tỷ lệ, (2) một mô-đun tự chú ý phân dạng (fractal self-attention), và (3) một mô-đun trộn tỷ lệ (scale mixer). Ba thành phần này có thể nâng cao hiệu quả khả năng học các biểu diễn cảm xúc cục bộ đa tỷ lệ của Transformer. Kết quả thử nghiệm cho thấy mô hình MSTR đề xuất vượt trội đáng kể so với Transformer cơ bản và các phương pháp tiên tiến khác trên ba tập dữ liệu cảm xúc giọng nói: IEMOCAP, MELD và CREMA-D. Ngoài ra, mô hình này giảm đáng kể chi phí tính toán.
@@ -32,13 +34,31 @@ $\rightarrow$ Ma trận đặc trưng đầu vào:
 - T: số frame thời gian (kiểu như mỗi lát cắt nhỏ của sóng âm).
 - F: số chiều đặc trưng tại mỗi frame (kiểu như MFCC, Wav2Vec features, hoặc embedding từ mạng trước đó).<br>
 
-Chiếu vào Q, K, V:
+### Chiếu vào Q, K, V:
 - Để mô hình học được mối quan hệ giữa các frame, ta phải chuyển đổi đầu vào thành Query, Key, Value.
 
 $$Q=XW^Q,K=XW^K,V=XW^V$$
 
-Ở đây:
--   $W$
+### Ở đây:
+-   $W^Q, W^K, W^V \in \mathbb{R}^{F \times F}$ là các ma trận trọng số học được.
+- Các phép nhân này đơn giản là chiếu không gian đặc trưng đầu vào sang 3 không gian mới: không gian của Query, Key và Value.
+
+### Hình dung:
+- Giả sử mỗi frame là một vecotr 512 chiều $\rightarrow F=512$
+- Tổng cộng có 100 frames $\rightarrow T=100$
+- khi đó ${X}$ là ma trận $100 \times 512$
+- Sau khi nhân với $W^Q \in \mathbb{R}^{512 \times 512}$ → thu được $Q \in \mathbb{R}^{100 \times 512}$
+### Ý nghĩa:
+- Query (Q): Thứ dùng để hỏi – muốn biết cái gì?
+
+- Key (K): Thứ để tra – kiểu như nội dung dữ liệu đang có.
+
+- Value (V): Thứ để lấy ra – thông tin cần giữ lại.
+$\rightarrow$ Kết hợp Q-K-V để học mối quan hệ giữa các thời điểm khác nhau trong chuỗi âm thanh.
+### Tại sao cần Q,K,V:
+- Đây là để tính attention scores:
+$$Attention(Q,K,V)=softmax({QK}/\sqrt{{d}_{k}})V$$
+
 
 Như được thể hiện trong Hình 2, tập { ${Q},{K},{V}$ }  thu được sau đó được đưa vào một mô-đun gộp trung bình (average pooling) riêng biệt để thu nhận các đặc trưng ở các tỷ lệ thời gian khác nhau. Cụ thể, một hệ số tỷ lệ $S_k = p^{k-1}$ được thiết kế cho mức tỷ lệ thứ $k$, trong đó $p$ là hệ số phân dạng (fractal factor) và $K \in$ {1, 2, ..., L}. Mức tỷ lệ thứ $k$ hoạt động dựa trên mức tỷ lệ thứ $k-1$ bằng cách lấy trung bình $p$ khung liền kề. Nói cách khác, tập đặc trưng đầu vào { ${Q}, {K}, {V}$ } đi qua toán tử gộp trung bình để thu nhận các tập đặc trưng tỷ lệ thời gian ở các tỷ lệ thời gian khác nhau ${X}^{K} = \{Q^K,K^K,V^K\} \in R^{{T/S^K} \times F}$ . Tập đặc trưng mới $\textbf{X}^{k}$ sẽ được đưa vào mô-đun tự chú ý phân dạng để mô hình hóa mối quan hệ thời gian của các đặc trưng. Đáng chú ý là việc sử dụng toán tử gộp thay vì tích chập (convolution) có thể hoạt động tốt hơn, duy trì cấu trúc thời gian ban đầu, và không thêm bất kỳ tham số bổ sung nào.
 
