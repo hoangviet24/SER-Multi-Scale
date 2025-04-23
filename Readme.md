@@ -1,5 +1,4 @@
-[![Build Status](https://github.com/hoangviet24/SER-Multi-Scale-Temporal-Transformer/actions/workflows/python.yml/badge.svg)](https://github.com/hoangviet24/SER-Multi-Scale-Temporal-Transformer/actions)
-
+[![Build Status](https://github.com/hoangviet24/SER-Multi-Scale-Temporal-Transformer/actions/workflows/blank.yml/badge.svg)](https://github.com/hoangviet24/SER-Multi-Scale-Temporal-Transformer/actions)
 
 # Transformer Thời gian Đa tỷ lệ cho Nhận diện Cảm xúc qua Giọng nói
 # Tóm tắt
