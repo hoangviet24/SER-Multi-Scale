@@ -113,3 +113,30 @@ Cái này chính là một phiên bản attention theo từng tầng fractal, gi
 
 - Không cần tham số → nhẹ hơn, nhanh hơn, ít overfitting.
 
+# 2.2 (Fractal Self-Attention) Tự chú ý phân dạng
+Một Transformer thông thường sử dụng cơ chế tự chú ý toàn cục (global self-attention), do đó đòi hỏi lượng tính toán lớn. Trong mô hình MSTR được đề xuất, chúng tôi đề xuất tính toán tự chú ý trong một **"cửa sổ"** có độ dài cố định, vì chúng tôi đã có các đặc trưng ở các thang thời gian khác nhau. Trong triển khai của chúng tôi, độ dài cửa sổ được đặt bằng p, tức là giống với yếu tố phân dạng (fractal factor). Do đó, chúng tôi gọi mô-đun tự chú ý này là tự chú ý phân dạng (fractal self-attention).
+
+Cụ thể, tập hợp đặc trưng ở mức thang ${k}$, $X^{k}=\{Q^{k},K^{k},V^{k}\}$, được chia theo kích thước cửa sổ p. Lấy $Q^{k}$ làm ví dụ, chúng ta sẽ có $Q^{k}=\{Q_{1}^{k},Q_{2}^{k},...,Q_{w}^{k}\}$, trong đó $w=\frac{T}{S_{k}\times p}=\frac{T}{p^{k}}$. Đối với dữ liệu trong khối cửa sổ thứ i, tự chú ý được tính toán như sau:
+
+
+$$Attention({Q}_{i}^k,{k}_{i}^k,{V}_{i}^k)=softmax(\frac{{}{{Q}_{i}^k{K}_{i}^{kt}}}{\sqrt{F}}){V}_{i}^k$$
+
+
+
+trong đó t biểu thị phép chuyển vị và $A_{i}^{k}=Attention(Q_{i}^{k},K_{i}^{k},V_{i}^{k})$.
+
+Cuối cùng, các ma trận đầu ra từ tự chú ý được tính toán tại các cửa sổ khác nhau được nối theo chiều thời gian để tạo ra các đặc trưng mới $X^{k}\in\mathbb{R}^{\frac{T}{S_{k}}\times F}$:
+
+
+$$Y^{k}=Concat(A_{1}^{k},A_{2}^{k},...,A_{w}^{k})$$
+
+
+Đầu ra $Y^{k}$ từ mức thang k sau đó sẽ được đưa vào mô-đun trộn thang (scale mixer module). Trong phương trình 1, một cơ chế chú ý đơn đầu (single-head attention) với chiều đầy đủ được sử dụng để đơn giản hóa. Cơ chế đa đầu (multi-head) được mô tả trong [5] cũng có thể được áp dụng một cách trực tiếp. Độ dài cửa sổ p được áp dụng cho phép tính tự chú ý giúp giảm đáng kể lượng tính toán, đặc biệt khi độ dài dữ liệu đầu vào lớn.
+
+# 2.3 (Scale Mixer Module) Module máy trộn tỷ lệ
+Mô-dun tự chú ý phân dạng có thể làm giảm đáng kể dộ phức tạp tính toán, nhưng nó cũng dẫn đến vấn đề là mô hình có thể tập trung quá mức vào ngữ nghĩa bố cục và bỏ qua thông tin toàn cục. Do đó, chúng tôi đề xuất một mô-đun trộn tỷ lệ để tổng hợp dữ liệu đa tỷ lệ nhằm có được biểu diễn cảm xúc thống nhất. Bước đầu tiên là nội suy dữ liệu ở các tỷ lệ thời gian khác nhau để có chiều dài thời gian ban đầu T. Điều này đạt được bằng cách thực hiện thao tác lấy mẫu gần nhất. Sau đó dữ liệu lấy mẫu tăng sẽ đi qua hàm kích hoạt Gelu trước khi chúng ta chỉ cần cộng tất cả chúng lại. Cuối cùng, một phép chiếu tuyến tính ${W}^0$ được áp dụng để có được biểu diễn cảm xúc đa thang độ cuối cùng
+
+$$ {Y}^k_{up} = UpSampling({Y}^k_s) $$
+$$ Output=(\sum_{k=1}^n Gelu({Y}^k_{up})){W}^0 $$
+
+Thông tin ngữ nghĩa cục bộ từ các đặc điểm chi tiết và thông tin ngữ nghĩa toàn cục từ các đặc điểm chi tiết sẽ được hợp nhất lại thành một biểu diễn duy nhất. Mô-đun bộ trộn tỷ lệ bổ sung hiệu quả cho sự thiếu hụt chỉ có thể trích xuất thông tin cục bộ nổi bật trong một cửa sổ ngắn ở một tỷ lệ cụ thể do sự tự chú ý fractal gây ra. Các phương pháp hợp nhất phức tạp hơn khác như sự chú ý tỷ lệ để chọn thông tin cảm xúc quan trọng cũng có thể được sử dụng để tổng hợp thông tin từ các đặc điểm đa tỷ lệ. Nhưng phương pháp đơn giản được mô tả ở trên thực hiện tốt nhất trong số tất cả các phương pháp hợp nhất mà chúng tôi đã khám phá trong các thí nghiệm của mình.
