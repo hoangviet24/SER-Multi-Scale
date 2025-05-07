@@ -140,3 +140,9 @@ $$ {Y}^k_{up} = UpSampling({Y}^k_s) $$
 $$ Output=(\sum_{k=1}^n Gelu({Y}^k_{up})){W}^0 $$
 
 Thông tin ngữ nghĩa cục bộ từ các đặc điểm chi tiết và thông tin ngữ nghĩa toàn cục từ các đặc điểm chi tiết sẽ được hợp nhất lại thành một biểu diễn duy nhất. Mô-đun bộ trộn tỷ lệ bổ sung hiệu quả cho sự thiếu hụt chỉ có thể trích xuất thông tin cục bộ nổi bật trong một cửa sổ ngắn ở một tỷ lệ cụ thể do sự tự chú ý fractal gây ra. Các phương pháp hợp nhất phức tạp hơn khác như sự chú ý tỷ lệ để chọn thông tin cảm xúc quan trọng cũng có thể được sử dụng để tổng hợp thông tin từ các đặc điểm đa tỷ lệ. Nhưng phương pháp đơn giản được mô tả ở trên thực hiện tốt nhất trong số tất cả các phương pháp hợp nhất mà chúng tôi đã khám phá trong các thí nghiệm của mình.
+
+# 2.4 (Computational Complexity Analyse) Phân tích độ phức tạp thuật toán
+Trong một mô hình MSTR, sự tụ chú ý được tính toán trong một cửa sổ có chiều dài p. Độ phức tạp tính toán của sự tự chú ý từ một Transformer (VTR) thông thường và sự tự chú ý fractal trong mô hình MSTR được đưa ra dưới đây:
+$$\mathcal{O}(\mathcal{VTR}) = T^2\times F$$
+$$ \mathcal{O(MSTR)} = \sum_{k=1}^l \frac{T}{S_k} \times p^2 \times F $$
+Ở đây, chúng tôi tạm bỏ qua công sức tính toán của việc pooling (gộp dữ liệu) và upsampling (tăng kích thước dữ liệu) vì nó nhỏ xíu so với công sức tính toán của mô-đun tự chú ý (self-attention). Như bạn thấy đấy, tính toán cho tầng tự chú ý trong một Transformer bình thường (vanilla Transformer) thì tăng theo hàm bậc hai so với độ dài chuỗi đầu vào, còn tính toán cho cái tự chú ý kiểu fractal trong mô hình MSTR thì chỉ tăng tuyến tính thôi.
