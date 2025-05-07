@@ -143,6 +143,8 @@ Thông tin ngữ nghĩa cục bộ từ các đặc điểm chi tiết và thôn
 
 # 2.4 (Computational Complexity Analyse) Phân tích độ phức tạp thuật toán
 Trong một mô hình MSTR, sự tụ chú ý được tính toán trong một cửa sổ có chiều dài p. Độ phức tạp tính toán của sự tự chú ý từ một Transformer (VTR) thông thường và sự tự chú ý fractal trong mô hình MSTR được đưa ra dưới đây:
+
 $$\mathcal{O}(\mathcal{VTR}) = T^2\times F$$
 $$ \mathcal{O(MSTR)} = \sum_{k=1}^l \frac{T}{S_k} \times p^2 \times F $$
+
 Ở đây, chúng tôi tạm bỏ qua công sức tính toán của việc pooling (gộp dữ liệu) và upsampling (tăng kích thước dữ liệu) vì nó nhỏ xíu so với công sức tính toán của mô-đun tự chú ý (self-attention). Như bạn thấy đấy, tính toán cho tầng tự chú ý trong một Transformer bình thường (vanilla Transformer) thì tăng theo hàm bậc hai so với độ dài chuỗi đầu vào, còn tính toán cho cái tự chú ý kiểu fractal trong mô hình MSTR thì chỉ tăng tuyến tính thôi.
