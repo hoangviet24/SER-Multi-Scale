@@ -54,7 +54,7 @@ if __name__ == '__main__':
     
     train_idx, test_idx = train_test_split(
         range(len(dataset)),
-        test_size=0.3,
+        test_size=0.2,
         random_state=42,
         stratify=[dataset[i][1] for i in range(len(dataset))]
     )

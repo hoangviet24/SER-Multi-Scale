@@ -9,61 +9,71 @@ from pydub import AudioSegment
 from pydub.exceptions import CouldntDecodeError
 import tempfile
 import uuid
+import logging
+
+# Thiết lập logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def convert_to_wav(file_path, temp_dir="./temp"):
-    """chuyển file không phải WAV thành WAV, trả về đường dẫn file WAV"""
+    """Chuyển file không phải WAV thành WAV, trả về đường dẫn file WAV"""
+    file_path = os.path.abspath(file_path)  # Chuyển thành đường dẫn tuyệt đối
     file_ext = os.path.splitext(file_path)[1].lower()
     if file_ext == '.wav':
-        return file_path  # không cần chuyển nếu đã là WAV
+        return file_path  # Không cần chuyển nếu đã là WAV
     
     supported_formats = ['.mp3', '.m4a', '.ogg', '.flac', '.mp4']
     if file_ext not in supported_formats:
-        raise ValueError(f"unsupported file format: {file_ext}. supported formats: {supported_formats + ['.wav']}")
+        raise ValueError(f"Unsupported file format: {file_ext}. Supported formats: {supported_formats + ['.wav']}")
     
     try:
         audio = AudioSegment.from_file(file_path)
         if not audio.frame_rate or audio.frame_count() == 0 or len(audio.get_array_of_samples()) == 0:
-            raise ValueError(f"file {file_path} has no valid audio track or is empty")
+            raise ValueError(f"File {file_path} has no valid audio track or is empty")
         
-        # tạo file WAV tạm
+        # Tạo file WAV tạm
+        temp_dir = os.path.abspath(temp_dir)
         os.makedirs(temp_dir, exist_ok=True)
         temp_file = os.path.join(temp_dir, f"converted_{uuid.uuid4().hex}.wav")
         audio.export(temp_file, format="wav")
-        print(f"converted {file_path} to {temp_file}")
+        logger.info(f"Converted {file_path} to {temp_file}")
         return temp_file
     except CouldntDecodeError:
-        raise ValueError(f"could not decode {file_path}. check if file is valid or has audio track")
+        raise ValueError(f"Could not decode {file_path}. Check if file is valid or has audio track")
     except Exception as e:
-        raise ValueError(f"error converting {file_path} to WAV: {str(e)}")
+        raise ValueError(f"Error converting {file_path} to WAV: {str(e)}")
 
 def extract_mfcc_with_cache(file_path, sr=16000, n_mfcc=40, max_len=100, cache_dir="./mfcc_cache"):
-    # chuyển file thành WAV nếu cần
+    """Trích xuất MFCC từ file âm thanh và lưu vào cache_dir"""
+    # Chuyển đổi file_path và cache_dir thành đường dẫn tuyệt đối
+    file_path = os.path.abspath(file_path)
+    cache_dir = os.path.abspath(cache_dir)
+    
+    # Tạo tên file cache
+    cache_filename = os.path.basename(file_path).replace(os.sep, "_").replace(".", "_") + ".npy"
+    cache_path = os.path.join(cache_dir, cache_filename)
+    
+    # Kiểm tra cache
+    if os.path.exists(cache_path):
+        return np.load(cache_path)
+    
+    # Chuyển file thành WAV nếu cần
     temp_file = None
     try:
         wav_file = convert_to_wav(file_path)
-        # tạo tên cache dựa trên file gốc
-        cache_path = os.path.join(cache_dir, file_path.replace("/", "_").replace("\\", "_").replace(".", "_") + ".npy")
-        if os.path.exists(cache_path):
-            return np.load(cache_path)
-        
-        # kiểm tra file WAV
+        # Kiểm tra file WAV
         audio = AudioSegment.from_file(wav_file)
         if not audio.frame_rate or audio.frame_count() == 0 or len(audio.get_array_of_samples()) == 0:
-            raise ValueError(f"file {wav_file} has no valid audio track or is empty")
+            raise ValueError(f"File {wav_file} has no valid audio track or is empty")
         
-        # print(f"file: {wav_file}")
-        # print(f"duration: {audio.duration_seconds:.2f}s")
-        # print(f"channels: {audio.channels}")
-        # print(f"sample rate: {audio.frame_rate}")
-        
-        # chuyển về mono và set sample rate
+        # Chuyển về mono và set sample rate
         audio = audio.set_channels(1).set_frame_rate(sr)
         y = np.array(audio.get_array_of_samples(), dtype=np.float32)
         if len(y) == 0:
-            raise ValueError(f"failed to extract audio data from {wav_file}")
+            raise ValueError(f"Failed to extract audio data from {wav_file}")
         y = y / np.max(np.abs(y)) if np.max(np.abs(y)) != 0 else y
         
-        # trích xuất MFCC
+        # Trích xuất MFCC
         mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
         if mfcc.shape[1] > max_len:
             mfcc = mfcc[:, :max_len]
@@ -72,17 +82,16 @@ def extract_mfcc_with_cache(file_path, sr=16000, n_mfcc=40, max_len=100, cache_d
         mfcc = (mfcc - np.mean(mfcc)) / (np.std(mfcc) + 1e-6)
         mfcc_T = mfcc.T
         
-        # lưu vào cache
+        # Lưu vào cache
         os.makedirs(cache_dir, exist_ok=True)
         np.save(cache_path, mfcc_T)
         return mfcc_T
     except Exception as e:
-        raise ValueError(f"error processing {file_path}: {str(e)}")
+        raise ValueError(f"Error processing {file_path}: {str(e)}")
     finally:
-        # xóa file tạm nếu có
+        # Xóa file tạm nếu có
         if temp_file and os.path.exists(temp_file):
             os.remove(temp_file)
-            print(f"deleted temporary file: {temp_file}")
 
 class EmotionAudioDataset(torch.utils.data.Dataset):
     def __init__(self, root_dir, max_len=100):

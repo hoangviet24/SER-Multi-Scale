@@ -4,56 +4,62 @@ import os
 import matplotlib.pyplot as plt
 import sys
 from utils import extract_mfcc_with_cache, MSTRModel, EmotionAudioDataset
+import logging
 
-def predict_emotion(file_path, model, label_map, device, max_len=100, confidence_threshold=80):
+# Thiết lập logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def predict_emotion(file_path, model, label_map, device, max_len=100, confidence_threshold=50, cache_dir="./mfcc_cache"):
     model.eval()
-    x = extract_mfcc_with_cache(file_path, max_len=max_len)
+    file_path = os.path.abspath(file_path)  # Chuyển thành đường dẫn tuyệt đối
+    x = extract_mfcc_with_cache(file_path, max_len=max_len, cache_dir=cache_dir)
     if x.sum() == 0:
-        raise ValueError(f"failed to extract audio from {file_path}. ensure file has valid audio track")
+        raise ValueError(f"Failed to extract audio from {file_path}. Ensure file has valid audio track")
     
-    print(f"test mfcc shape: {x.shape}, mean: {x.mean():.4f}, std: {x.std():.4f}")
+    logger.info(f"Test MFCC shape: {x.shape}, mean: {x.mean():.4f}, std: {x.std():.4f}")
     x = torch.tensor(x, dtype=torch.float32).unsqueeze(0).to(device)
     with torch.no_grad():
         out = model(x)
         probs = F.softmax(out, dim=1)
-        print(f"logits: {out.cpu().numpy()}")
-        print(f"probabilities: {probs.cpu().numpy()}")
+        logger.info(f"Logits: {out.cpu().numpy()}")
+        logger.info(f"Probabilities: {probs.cpu().numpy()}")
         max_prob, pred = torch.max(probs, 1)
     
     inv_label_map = {v: k for k, v in label_map.items()}
     confidence_score = max_prob.item() * 100
 
-    #label
+    # Label
     labels = [inv_label_map[i] for i in range(len(inv_label_map))]
     prob_values = [prob.item() * 100 for prob in probs[0]]
-    # sort dữ liệu để biểu đồ dễ nhìn hơn (từ cao đến thấp)
+    # Sort dữ liệu để biểu đồ dễ nhìn hơn (từ cao đến thấp)
     sorted_data = sorted(zip(labels, prob_values), key=lambda x: x[1], reverse=True)
     sorted_labels, sorted_probs = zip(*sorted_data)
 
-    # tạo biểu đồ cột
-    plt.figure(figsize=(10, 6))  # kích thước biểu đồ
-    plt.bar(sorted_labels, sorted_probs, color=['#ff6384' if l == 'YAF_disgust' else '#36a2eb' for l in sorted_labels])
+    # Tạo biểu đồ cột
+    plt.figure(figsize=(10, 6))  # Kích thước biểu đồ
+    plt.bar(sorted_labels, sorted_probs)
     plt.xlabel('Emotions')
     plt.ylabel('Probability (%)')
-    plt.title('Emotion Prediction Probabilities for test_audio.wav')
-    plt.xticks(rotation=45, ha='right')  # xoay nhãn cho dễ đọc
-    plt.tight_layout()  # tránh nhãn bị cắt
+    plt.title(f'Emotion Prediction Probabilities for {os.path.basename(file_path)}')
+    plt.xticks(rotation=45, ha='right')  # Xoay nhãn cho dễ đọc
+    plt.tight_layout()  # Tránh nhãn bị cắt
 
-    # lưu thành file hình ảnh
+    # Lưu thành file hình ảnh
     plt.savefig('emotion_probabilities.png', dpi=300, bbox_inches='tight')
-    plt.close()  # đóng figure để tiết kiệm bộ nhớ
+    plt.close()  # Đóng figure để tiết kiệm bộ nhớ
 
-    print("biểu đồ đã được lưu thành emotion_probabilities.png")
+    logger.info("Biểu đồ đã được lưu thành emotion_probabilities.png")
     
-    # in tất cả xác suất cho từng nhãn
+    # In tất cả xác suất cho từng nhãn
     sorted_probs = sorted(zip(labels, prob_values), key=lambda x: x[1], reverse=True)
-    print("sorted emotion probabilities:")
+    logger.info("Sorted emotion probabilities:")
     for emotion, prob in sorted_probs:
-        if prob > 0.01:  # chỉ in những xác suất > 0.01%
-            print(f"{emotion}: {prob:.2f}%")
+        if prob > 0.01:  # Chỉ in những xác suất > 0.01%
+            logger.info(f"{emotion}: {prob:.2f}%")
     
     if confidence_score < confidence_threshold:
-        print(f"warning: low confidence ({confidence_score:.2f}%). prediction may be unreliable.")
+        logger.warning(f"Low confidence ({confidence_score:.2f}%). Prediction may be unreliable.")
         return "unknown", confidence_score
     
     predicted_emotion = inv_label_map[pred.item()]
@@ -63,7 +69,7 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     dataset = EmotionAudioDataset('./Tess', max_len=100)
     if len(dataset) == 0:
-        print("no data found. exiting.")
+        logger.error("No data found. Exiting.")
         exit()
     
     model = MSTRModel(
@@ -78,20 +84,20 @@ if __name__ == '__main__':
     if os.path.exists(checkpoint_path):
         try:
             model.load_state_dict(torch.load(checkpoint_path, map_location=device))
-            print(f"loaded pre-trained model from {checkpoint_path}")
+            logger.info(f"Loaded pre-trained model from {checkpoint_path}")
         except RuntimeError as e:
-            print(f"error loading model: {e}. exiting.")
+            logger.error(f"Error loading model: {e}. Exiting.")
             exit()
     else:
-        print(f"no checkpoint found at {checkpoint_path}. please train the model first.")
+        logger.error(f"No checkpoint found at {checkpoint_path}. Please train the model first.")
         exit()
 
     file_path = sys.argv[1] if len(sys.argv) > 1 else "./test_audio.wav"
     if os.path.exists(file_path):
         try:
-            predicted_emotion, confidence = predict_emotion(file_path, model, dataset.label_map, device)
-            print(f"predicted emotion for {file_path}: {predicted_emotion} with confidence {confidence:.2f}%")
+            predicted_emotion, confidence = predict_emotion(file_path, model, dataset.label_map, device, cache_dir="./mfcc_cache")
+            logger.info(f"Predicted emotion for {file_path}: {predicted_emotion} with confidence {confidence:.2f}%")
         except ValueError as e:
-            print(e)
+            logger.error(str(e))
     else:
-        print(f"test file {file_path} not found. please provide a valid audio file (.wav, .mp3, .ogg, .flac)")
+        logger.error(f"Test file {file_path} not found. Please provide a valid audio file (.wav, .mp3, .ogg, .flac)")
