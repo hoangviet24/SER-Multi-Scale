@@ -12,7 +12,7 @@ from utils import convert_to_wav
 import logging
 import shutil
 import wave
-
+from transformers import Wav2Vec2Processor
 # Kiểm tra CUDA và khởi tạo wav2vec nếu có
 use_wav2vec = torch.cuda.is_available()
 processor = None
@@ -33,18 +33,6 @@ def get_audio_length(file_path):
         duration = frames / float(rate)
     return duration
 
-# Style
-style = {
-    "font": ("Segoe UI", 12, "bold"),
-    "bg": "#6C5CE7",  # pastel violet
-    "fg": "white",
-    "relief": "flat",
-    "activebackground": "#a29bfe",
-    "activeforeground": "white",
-    "bd": 0,
-    "padx": 20,
-    "pady": 10
-}
 
 # Thiết lập logging
 logging.basicConfig(level=logging.INFO)
@@ -80,10 +68,6 @@ except Exception as e:
 
 # Tạo cửa sổ chính
 root = tk.Tk()
-root.title("Nhận Diện Cảm Xúc Qua Giọng Nói")
-root.geometry("1920x1200")
-root.configure(bg="#f0f0f0")
-root.minsize(1200, 900)
 
 # Biến toàn cục
 original_img = None
@@ -322,27 +306,53 @@ def save_image():
         except Exception as e:
             messagebox.showerror("Lỗi", f"Không thể lưu hình ảnh: {str(e)}")
 
-save_image_button = tk.Button(root, text="💾 Lưu Hình Ảnh", command=save_image, **style)
+
+root.title("Nhận Diện Cảm Xúc Qua Giọng Nói")
+root.geometry("600x400")
+root.configure(bg="#f0f0f0")
+root.minsize(400, 300)
+
+# ======= Tạo canvas + scrollbar =======
+main_canvas = tk.Canvas(root, bg="#f0f0f0", highlightthickness=0)
+scrollbar = ttk.Scrollbar(root, orient="vertical", command=main_canvas.yview)
+scrollable_frame = tk.Frame(main_canvas, bg="#f0f0f0")
+
+scrollable_frame.bind(
+    "<Configure>",
+    lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+)
+
+main_canvas.create_window((0, 0), window=scrollable_frame, anchor="n", tags="frame")
+#main_canvas.configure(yscrollcommand=scrollbar.set)
+
+main_canvas.pack(side="left", fill="both", expand=True)
+scrollbar.pack(side="right", fill="y")
+
+# ======= Thêm các widget vào scrollable_frame =======
+style = {"font": ("Arial", 12), "bg": "#ffffff", "fg": "#000000"}
+
+save_image_button = tk.Button(scrollable_frame, text="💾 Lưu Hình Ảnh", command=save_image, **style)
 save_image_button.pack(pady=10)
 
-title_label = tk.Label(root, text="Nhận Diện Cảm Xúc", font=("Arial", 20, "bold"), bg="#f0f0f0")
+title_label = tk.Label(scrollable_frame, text="Nhận Diện Cảm Xúc", font=("Arial", 20, "bold"), bg="#f0f0f0")
 title_label.pack(pady=10)
 
-model_frame = tk.Frame(root, bg="#f0f0f0")
+model_frame = tk.Frame(scrollable_frame, bg="#f0f0f0")
 model_frame.pack(pady=5)
 
-upload_button = tk.Button(root, text="🎵 Tải File Âm Thanh/Video", command=upload_file, **style)
+upload_button = tk.Button(scrollable_frame, text="🎵 Tải File Âm Thanh/Video", command=upload_file, **style)
 upload_button.pack(pady=10)
 
+file_name_label = tk.Label(scrollable_frame, text="Tên file...", font=("Arial", 12), bg="#f0f0f0")
 file_name_label.pack(pady=5)
 
-result_label = tk.Label(root, text="Chưa có kết quả", font=("Arial", 14), bg="#f0f0f0")
+result_label = tk.Label(scrollable_frame, text="Chưa có kết quả", font=("Arial", 14), bg="#f0f0f0")
 result_label.pack(pady=10)
 
-image_label = tk.Label(root, bg="#f0f0f0")
+image_label = tk.Label(scrollable_frame, bg="#f0f0f0")
 image_label.pack(pady=10)
 
-control_frame = tk.Frame(root, bg="#f0f0f0")
+control_frame = tk.Frame(scrollable_frame, bg="#f0f0f0")
 control_frame.pack(pady=10)
 
 play_button = tk.Button(control_frame, text="▶️ Phát Âm Thanh", command=play_audio, **style, state='disabled')
@@ -351,12 +361,24 @@ play_button.grid(row=0, column=0, padx=10)
 stop_button = tk.Button(control_frame, text="⏹ Dừng Lại", command=stop_audio, **style, state='disabled')
 stop_button.grid(row=0, column=1, padx=10)
 
-progress_label = tk.Label(root, text="Playing: 0.0s", font=("Arial", 12), bg="#f0f0f0")
+progress_label = tk.Label(scrollable_frame, text="Playing: 0.0s", font=("Arial", 12), bg="#f0f0f0")
 progress_label.pack(pady=5)
 
-progress_bar = ttk.Progressbar(root, orient='horizontal', length=400, mode='determinate')
+progress_bar = ttk.Progressbar(scrollable_frame, orient='horizontal', length=400, mode='determinate')
 progress_bar.pack(pady=5)
 
+# ======= Bind window resize & protocol =======
 root.bind('<Configure>', resize_image)
-root.protocol("WM_DELETE_WINDOW", on_closing)
+root.protocol("WM_DELETE_WINDOW", root.quit)
+def on_canvas_resize(event):
+    canvas_width = event.width
+    main_canvas.coords("frame", canvas_width // 2, 0)
+    scrollable_frame.config(width=canvas_width)
+    main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+
+main_canvas.bind("<Configure>", on_canvas_resize)
+
+main_canvas.configure(yscrollcommand=scrollbar.set)
+main_canvas.pack(side="left", fill="both", expand=True)
+scrollbar.pack(side="right", fill="y")
 root.mainloop()
