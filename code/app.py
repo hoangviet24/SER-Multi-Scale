@@ -13,6 +13,19 @@ import logging
 import shutil
 import wave
 
+# Kiểm tra CUDA và khởi tạo wav2vec nếu có
+use_wav2vec = torch.cuda.is_available()
+processor = None
+wav2vec_model = None
+if use_wav2vec:
+    try:
+        from transformers import Wav2Vec2Processor, Wav2Vec2Model
+        processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
+        wav2vec_model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
+    except ImportError:
+        logging.warning("Thư viện transformers không được cài đặt. Chuyển về MFCC.")
+        use_wav2vec = False
+
 def get_audio_length(file_path):
     with wave.open(file_path, 'rb') as wf:
         frames = wf.getnframes()
@@ -20,7 +33,7 @@ def get_audio_length(file_path):
         duration = frames / float(rate)
     return duration
 
-#Style
+# Style
 style = {
     "font": ("Segoe UI", 12, "bold"),
     "bg": "#6C5CE7",  # pastel violet
@@ -33,8 +46,6 @@ style = {
     "pady": 10
 }
 
-audio_length = 0  # lưu độ dài file audio (giây)
-
 # Thiết lập logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,11 +56,11 @@ except pygame.error as e:
     logger.error(f"pygame mixer init failed: {e}")
     pygame.mixer = None
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-dataset_merged_dataset = EmotionAudioDataset('./merged_dataset', max_len=100)
+device = torch.device('cuda' if use_wav2vec else 'cpu')
+dataset_merged_dataset = EmotionAudioDataset('./merged_dataset', max_len=100, use_wav2vec=use_wav2vec, processor=processor, wav2vec_model=wav2vec_model)
 
 model_merged_dataset = MSTRModel(
-    input_dim=40,
+    input_dim=768 if use_wav2vec else 40,
     num_classes=len(dataset_merged_dataset.label_map),
     num_scales=3,
     window_size=4,
@@ -57,11 +68,12 @@ model_merged_dataset = MSTRModel(
 ).to(device)
 
 try:
-    if os.path.exists('./models/best_model.pth'):
-        model_merged_dataset.load_state_dict(torch.load('./models/best_model.pth', map_location=device))
-        logger.info("Loaded merged_dataset model from ./models/best_model.pth")
+    model_path = './models/best_model_wav2vec.pth' if use_wav2vec else './models/best_model_mfcc.pth'
+    if os.path.exists(model_path):
+        model_merged_dataset.load_state_dict(torch.load(model_path, map_location=device))
+        logger.info(f"Loaded model from {model_path}")
     else:
-        messagebox.showwarning("Cảnh báo", "Không tìm thấy mô hình merged_dataset. Sẽ dùng CREMA-D.")
+        messagebox.showwarning("Cảnh báo", f"Không tìm thấy mô hình tại {model_path}. Sẽ dùng mặc định.")
 except Exception as e:
     messagebox.showerror("Lỗi", f"Không thể tải mô hình: {str(e)}")
     raise
@@ -72,6 +84,7 @@ root.title("Nhận Diện Cảm Xúc Qua Giọng Nói")
 root.geometry("1920x1200")
 root.configure(bg="#f0f0f0")
 root.minsize(1200, 900)
+
 # Biến toàn cục
 original_img = None
 current_photo = None
@@ -163,7 +176,6 @@ def upload_file():
         global original_img, current_photo, last_image_size, processed_audio, current_audio_file, last_valid_size
         try:
             processed_audio = convert_to_wav(current_audio_file, temp_dir=temp_dir)
-                        
             audio_length = get_audio_length(processed_audio)
             root.after(0, lambda: progress_bar.config(maximum=audio_length))
             model = model_merged_dataset
@@ -173,9 +185,11 @@ def upload_file():
                 model,
                 dataset.label_map,
                 device,
+                processor=processor,
+                wav2vec_model=wav2vec_model,
                 max_len=100,
                 confidence_threshold=50,
-                cache_dir=os.path.abspath("./app_mfcc_cache")  # Sử dụng thư mục riêng cho app
+                cache_dir=os.path.abspath("./app_wav2vec_cache" if use_wav2vec else "./app_mfcc_cache")
             )
             
             root.after(0, lambda: result_label.config(text=f"Cảm xúc: {predicted_emotion} ({confidence:.2f}%)", font=("Arial", 14, "bold")))
@@ -221,7 +235,6 @@ def upload_file():
             root.after(0, lambda: play_button.config(state='disabled'))
             root.after(0, lambda: stop_button.config(state='disabled'))
             root.after(0, lambda: progress_label.config(text="Playing: 0.0s"))
-            # Reset file name label on error
             root.after(0, lambda: file_name_label.config(text="No file selected"))
         finally:
             pass
@@ -261,12 +274,15 @@ def update_progress():
     if pygame.mixer and pygame.mixer.music.get_busy():
         pos = pygame.mixer.music.get_pos() / 1000
         progress_label.config(text=f"Playing: {pos:.1f}s")
+        progress_bar['value'] = pos
         root.after(100, update_progress)
     else:
         progress_label.config(text="Playing: 0.0s")
+        progress_bar['value'] = 0
+        play_button.config(state='normal')
+        stop_button.config(state='disabled')
 
 def clear_temp_folder():
-    """Xóa tất cả file trong thư mục ./temp"""
     temp_dir = os.path.abspath("./temp")
     if os.path.exists(temp_dir):
         try:
@@ -282,7 +298,6 @@ def clear_temp_folder():
         logger.info(f"Temp folder {temp_dir} does not exist, no files to clear")
 
 def on_closing():
-    """Xử lý sự kiện khi đóng cửa sổ"""
     try:
         if pygame.mixer:
             pygame.mixer.music.stop()
@@ -293,17 +308,6 @@ def on_closing():
     finally:
         root.destroy()
 
-def update_progress():
-    if pygame.mixer and pygame.mixer.music.get_busy():
-        pos = pygame.mixer.music.get_pos() / 1000
-        progress_label.config(text=f"Playing: {pos:.1f}s")
-        progress_bar['value'] = pos
-        root.after(100, update_progress)
-    else:
-        progress_label.config(text="Playing: 0.0s")
-        progress_bar['value'] = 0
-        play_button.config(state='normal')
-        stop_button.config(state='disabled')
 def save_image():
     global original_img
     if original_img is None:
@@ -330,18 +334,14 @@ model_frame.pack(pady=5)
 upload_button = tk.Button(root, text="🎵 Tải File Âm Thanh/Video", command=upload_file, **style)
 upload_button.pack(pady=10)
 
-# Place the file name label below the upload button
 file_name_label.pack(pady=5)
 
-# Label kết quả cảm xúc
 result_label = tk.Label(root, text="Chưa có kết quả", font=("Arial", 14), bg="#f0f0f0")
 result_label.pack(pady=10)
 
-# Label hình ảnh biểu đồ
 image_label = tk.Label(root, bg="#f0f0f0")
 image_label.pack(pady=10)
 
-# Nút play và stop âm thanh
 control_frame = tk.Frame(root, bg="#f0f0f0")
 control_frame.pack(pady=10)
 
@@ -351,20 +351,12 @@ play_button.grid(row=0, column=0, padx=10)
 stop_button = tk.Button(control_frame, text="⏹ Dừng Lại", command=stop_audio, **style, state='disabled')
 stop_button.grid(row=0, column=1, padx=10)
 
-# Label hiển thị thời gian phát âm thanh
 progress_label = tk.Label(root, text="Playing: 0.0s", font=("Arial", 12), bg="#f0f0f0")
 progress_label.pack(pady=5)
-# Thanh Progress
+
 progress_bar = ttk.Progressbar(root, orient='horizontal', length=400, mode='determinate')
 progress_bar.pack(pady=5)
 
-
-
-# Lắng nghe sự kiện resize
 root.bind('<Configure>', resize_image)
-
-# Lắng nghe sự kiện đóng app
 root.protocol("WM_DELETE_WINDOW", on_closing)
-
-# Bắt đầu vòng lặp giao diện
 root.mainloop()

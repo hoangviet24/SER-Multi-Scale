@@ -10,17 +10,16 @@ from pydub.exceptions import CouldntDecodeError
 import tempfile
 import uuid
 import logging
+import torchaudio
 
-# Thiết lập logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def convert_to_wav(file_path, temp_dir="./temp"):
-    """Chuyển file không phải WAV thành WAV, trả về đường dẫn file WAV"""
-    file_path = os.path.abspath(file_path)  # Chuyển thành đường dẫn tuyệt đối
+    file_path = os.path.abspath(file_path)
     file_ext = os.path.splitext(file_path)[1].lower()
     if file_ext == '.wav':
-        return file_path  # Không cần chuyển nếu đã là WAV
+        return file_path
     
     supported_formats = ['.mp3', '.m4a', '.ogg', '.flac', '.mp4']
     if file_ext not in supported_formats:
@@ -31,7 +30,6 @@ def convert_to_wav(file_path, temp_dir="./temp"):
         if not audio.frame_rate or audio.frame_count() == 0 or len(audio.get_array_of_samples()) == 0:
             raise ValueError(f"File {file_path} has no valid audio track or is empty")
         
-        # Tạo file WAV tạm
         temp_dir = os.path.abspath(temp_dir)
         os.makedirs(temp_dir, exist_ok=True)
         temp_file = os.path.join(temp_dir, f"converted_{uuid.uuid4().hex}.wav")
@@ -44,36 +42,27 @@ def convert_to_wav(file_path, temp_dir="./temp"):
         raise ValueError(f"Error converting {file_path} to WAV: {str(e)}")
 
 def extract_mfcc_with_cache(file_path, sr=16000, n_mfcc=40, max_len=100, cache_dir="./mfcc_cache"):
-    """Trích xuất MFCC từ file âm thanh và lưu vào cache_dir"""
-    # Chuyển đổi file_path và cache_dir thành đường dẫn tuyệt đối
     file_path = os.path.abspath(file_path)
     cache_dir = os.path.abspath(cache_dir)
-    
-    # Tạo tên file cache
     cache_filename = os.path.basename(file_path).replace(os.sep, "_").replace(".", "_") + ".npy"
     cache_path = os.path.join(cache_dir, cache_filename)
     
-    # Kiểm tra cache
     if os.path.exists(cache_path):
         return np.load(cache_path)
     
-    # Chuyển file thành WAV nếu cần
     temp_file = None
     try:
         wav_file = convert_to_wav(file_path)
-        # Kiểm tra file WAV
         audio = AudioSegment.from_file(wav_file)
         if not audio.frame_rate or audio.frame_count() == 0 or len(audio.get_array_of_samples()) == 0:
             raise ValueError(f"File {wav_file} has no valid audio track or is empty")
         
-        # Chuyển về mono và set sample rate
         audio = audio.set_channels(1).set_frame_rate(sr)
         y = np.array(audio.get_array_of_samples(), dtype=np.float32)
         if len(y) == 0:
             raise ValueError(f"Failed to extract audio data from {wav_file}")
         y = y / np.max(np.abs(y)) if np.max(np.abs(y)) != 0 else y
         
-        # Trích xuất MFCC
         mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
         if mfcc.shape[1] > max_len:
             mfcc = mfcc[:, :max_len]
@@ -82,19 +71,55 @@ def extract_mfcc_with_cache(file_path, sr=16000, n_mfcc=40, max_len=100, cache_d
         mfcc = (mfcc - np.mean(mfcc)) / (np.std(mfcc) + 1e-6)
         mfcc_T = mfcc.T
         
-        # Lưu vào cache
         os.makedirs(cache_dir, exist_ok=True)
         np.save(cache_path, mfcc_T)
         return mfcc_T
     except Exception as e:
         raise ValueError(f"Error processing {file_path}: {str(e)}")
     finally:
-        # Xóa file tạm nếu có
         if temp_file and os.path.exists(temp_file):
             os.remove(temp_file)
 
+def extract_wav2vec_features(file_path, processor, model, device, max_len=100, cache_dir="./wav2vec_cache"):
+    file_path = os.path.abspath(file_path)
+    cache_dir = os.path.abspath(cache_dir)
+    cache_filename = os.path.basename(file_path).replace(os.sep, "_").replace(".", "_") + ".npy"
+    cache_path = os.path.join(cache_dir, cache_filename)
+
+    if os.path.exists(cache_path):
+        return np.load(cache_path)
+
+    try:
+        wav_file = convert_to_wav(file_path)
+        waveform, sample_rate = torchaudio.load(wav_file)
+        if sample_rate != 16000:
+            resampler = torchaudio.transforms.Resample(sample_rate, 16000)
+            waveform = resampler(waveform)
+        waveform = waveform.squeeze().to(device)
+
+        inputs = processor(waveform, sampling_rate=16000, return_tensors="pt", padding=True)
+        inputs = {key: val.to(device) for key, val in inputs.items()}
+
+        with torch.no_grad():
+            outputs = model(**inputs)
+        features = outputs.last_hidden_state.squeeze(0).cpu().numpy()
+
+        if features.shape[0] > max_len:
+            features = features[:max_len, :]
+        else:
+            features = np.pad(features, ((0, max_len - features.shape[0]), (0, 0)), mode='constant')
+
+        os.makedirs(cache_dir, exist_ok=True)
+        np.save(cache_path, features)
+        return features
+    except Exception as e:
+        raise ValueError(f"Error processing {file_path} with wav2vec: {str(e)}")
+
 class EmotionAudioDataset(torch.utils.data.Dataset):
-    def __init__(self, root_dir, max_len=100):
+    def __init__(self, root_dir, max_len=100, use_wav2vec=False, processor=None, wav2vec_model=None):
+        self.use_wav2vec = use_wav2vec
+        self.processor = processor
+        self.wav2vec_model = wav2vec_model
         self.samples = []
         self.label_map = {}
         for label in sorted(os.listdir(root_dir)):
@@ -103,7 +128,6 @@ class EmotionAudioDataset(torch.utils.data.Dataset):
                 continue
             self.label_map[label] = len(self.label_map)
             for file_name in os.listdir(path):
-                # chỉ chấp nhận WAV trong dataset
                 if file_name.endswith('.wav'):
                     full_path = os.path.join(path, file_name)
                     self.samples.append((full_path, self.label_map[label]))
@@ -123,7 +147,10 @@ class EmotionAudioDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         path, label = self.samples[idx]
-        x = extract_mfcc_with_cache(path, max_len=self.max_len)
+        if self.use_wav2vec:
+            x = extract_wav2vec_features(path, self.processor, self.wav2vec_model, torch.device('cuda'), max_len=self.max_len)
+        else:
+            x = extract_mfcc_with_cache(path, max_len=self.max_len)
         return torch.tensor(x, dtype=torch.float32), torch.tensor(label)
 
 class MultiScaleTemporalOperator(nn.Module):
@@ -213,10 +240,10 @@ class MSTRModel(nn.Module):
         self.attn = FractalSelfAttention(input_dim, window_size, num_heads)
         self.mixer = ScaleMixer(input_dim)
         self.classifier = nn.Sequential(
-            nn.Linear(input_dim, input_dim),
+            nn.Linear(input_dim, input_dim // 2),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(input_dim, num_classes)
+            nn.Linear(input_dim // 2, num_classes)
         )
         
         self.apply(self._init_weights)
