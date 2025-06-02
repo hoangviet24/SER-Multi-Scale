@@ -67,7 +67,7 @@ def predict_emotion(file_path, model, label_map, device, max_len=100, confidence
 
 if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    dataset = EmotionAudioDataset('./Tess', max_len=100)
+    dataset = EmotionAudioDataset('./merged_dataset', max_len=100)
     if len(dataset) == 0:
         logger.error("No data found. Exiting.")
         exit()

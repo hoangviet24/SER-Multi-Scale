@@ -1,4 +1,5 @@
 import tkinter as tk
+from tkinter import Canvas, Scrollbar, ttk
 from tkinter import filedialog, messagebox
 import torch
 from predict import predict_emotion, MSTRModel, EmotionAudioDataset
@@ -9,6 +10,30 @@ import threading
 import time
 from utils import convert_to_wav
 import logging
+import shutil
+import wave
+
+def get_audio_length(file_path):
+    with wave.open(file_path, 'rb') as wf:
+        frames = wf.getnframes()
+        rate = wf.getframerate()
+        duration = frames / float(rate)
+    return duration
+
+#Style
+style = {
+    "font": ("Segoe UI", 12, "bold"),
+    "bg": "#6C5CE7",  # pastel violet
+    "fg": "white",
+    "relief": "flat",
+    "activebackground": "#a29bfe",
+    "activeforeground": "white",
+    "bd": 0,
+    "padx": 20,
+    "pady": 10
+}
+
+audio_length = 0  # lưu độ dài file audio (giây)
 
 # Thiết lập logging
 logging.basicConfig(level=logging.INFO)
@@ -21,11 +46,11 @@ except pygame.error as e:
     pygame.mixer = None
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-dataset_tess = EmotionAudioDataset('./TESS', max_len=100)
+dataset_merged_dataset = EmotionAudioDataset('./merged_dataset', max_len=100)
 
-model_tess = MSTRModel(
+model_merged_dataset = MSTRModel(
     input_dim=40,
-    num_classes=len(dataset_tess.label_map),
+    num_classes=len(dataset_merged_dataset.label_map),
     num_scales=3,
     window_size=4,
     num_heads=4
@@ -33,20 +58,21 @@ model_tess = MSTRModel(
 
 try:
     if os.path.exists('./models/best_model.pth'):
-        model_tess.load_state_dict(torch.load('./models/best_model.pth', map_location=device))
-        logger.info("Loaded TESS model from ./models/best_model.pth")
+        model_merged_dataset.load_state_dict(torch.load('./models/best_model.pth', map_location=device))
+        logger.info("Loaded merged_dataset model from ./models/best_model.pth")
     else:
-        messagebox.showwarning("Cảnh báo", "Không tìm thấy mô hình TESS. Sẽ dùng CREMA-D.")
+        messagebox.showwarning("Cảnh báo", "Không tìm thấy mô hình merged_dataset. Sẽ dùng CREMA-D.")
 except Exception as e:
     messagebox.showerror("Lỗi", f"Không thể tải mô hình: {str(e)}")
     raise
 
+# Tạo cửa sổ chính
 root = tk.Tk()
 root.title("Nhận Diện Cảm Xúc Qua Giọng Nói")
-root.geometry("800x650")
+root.geometry("1920x1200")
 root.configure(bg="#f0f0f0")
-root.minsize(400, 300)
-
+root.minsize(1200, 900)
+# Biến toàn cục
 original_img = None
 current_photo = None
 last_valid_size = (800, 650)
@@ -55,7 +81,7 @@ processed_audio = None
 last_resize_time = 0
 resize_cooldown = 0.4
 last_image_size = (0, 0)
-selected_model = tk.StringVar(value="tess")
+selected_model = tk.StringVar(value="merged_dataset")
 
 # Add a label to display the selected file name
 file_name_label = tk.Label(root, text="No file selected", font=("Arial", 12), bg="#f0f0f0")
@@ -98,7 +124,6 @@ def resize_image(event):
     
     if (new_width, new_height) == last_image_size:
         return
-    
     try:
         resized_img = original_img.resize((new_width, new_height), Image.BILINEAR)
         current_photo = ImageTk.PhotoImage(resized_img)
@@ -123,9 +148,7 @@ def upload_file():
     os.makedirs(temp_dir, exist_ok=True)
     current_audio_file = os.path.join(temp_dir, file_name)
     try:
-        with open(current_audio_file, 'wb') as f:
-            with open(file_path, 'rb') as src:
-                f.write(src.read())
+        shutil.copyfile(file_path, current_audio_file)
         logger.info(f"Saved uploaded file to {current_audio_file}")
     except Exception as e:
         logger.error(f"Error saving uploaded file: {e}")
@@ -140,8 +163,11 @@ def upload_file():
         global original_img, current_photo, last_image_size, processed_audio, current_audio_file, last_valid_size
         try:
             processed_audio = convert_to_wav(current_audio_file, temp_dir=temp_dir)
-            model = model_tess
-            dataset = dataset_tess
+                        
+            audio_length = get_audio_length(processed_audio)
+            root.after(0, lambda: progress_bar.config(maximum=audio_length))
+            model = model_merged_dataset
+            dataset = dataset_merged_dataset
             predicted_emotion, confidence = predict_emotion(
                 processed_audio,
                 model,
@@ -151,9 +177,15 @@ def upload_file():
                 confidence_threshold=50,
                 cache_dir=os.path.abspath("./app_mfcc_cache")  # Sử dụng thư mục riêng cho app
             )
+            
             root.after(0, lambda: result_label.config(text=f"Cảm xúc: {predicted_emotion} ({confidence:.2f}%)", font=("Arial", 14, "bold")))
             
-            original_img = Image.open("emotion_probabilities.png")
+            if os.path.exists("emotion_probabilities.png"):
+                original_img = Image.open("emotion_probabilities.png")
+            else:
+                logger.warning("emotion_probabilities.png not found")
+                return
+
             window_width = root.winfo_width()
             window_height = root.winfo_height()
             last_valid_size = (window_width, window_height)
@@ -261,37 +293,78 @@ def on_closing():
     finally:
         root.destroy()
 
+def update_progress():
+    if pygame.mixer and pygame.mixer.music.get_busy():
+        pos = pygame.mixer.music.get_pos() / 1000
+        progress_label.config(text=f"Playing: {pos:.1f}s")
+        progress_bar['value'] = pos
+        root.after(100, update_progress)
+    else:
+        progress_label.config(text="Playing: 0.0s")
+        progress_bar['value'] = 0
+        play_button.config(state='normal')
+        stop_button.config(state='disabled')
+def save_image():
+    global original_img
+    if original_img is None:
+        messagebox.showwarning("Cảnh báo", "Chưa có hình ảnh nào để lưu!")
+        return
+    filetypes = [("PNG files", "*.png"), ("JPEG files", "*.jpg;*.jpeg"), ("All files", "*.*")]
+    save_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=filetypes)
+    if save_path:
+        try:
+            original_img.save(save_path)
+            messagebox.showinfo("Thành công", f"Đã lưu hình ảnh vào:\n{save_path}")
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể lưu hình ảnh: {str(e)}")
+
+save_image_button = tk.Button(root, text="💾 Lưu Hình Ảnh", command=save_image, **style)
+save_image_button.pack(pady=10)
+
 title_label = tk.Label(root, text="Nhận Diện Cảm Xúc", font=("Arial", 20, "bold"), bg="#f0f0f0")
 title_label.pack(pady=10)
 
 model_frame = tk.Frame(root, bg="#f0f0f0")
 model_frame.pack(pady=5)
 
-upload_button = tk.Button(root, text="Upload File Âm Thanh/Video", command=upload_file, font=("Arial", 12), bg="#4CAF50", fg="white", relief="flat", padx=15, pady=8)
-upload_button.pack(pady=5)
+upload_button = tk.Button(root, text="🎵 Tải File Âm Thanh/Video", command=upload_file, **style)
+upload_button.pack(pady=10)
 
 # Place the file name label below the upload button
 file_name_label.pack(pady=5)
 
-button_frame = tk.Frame(root, bg="#f0f0f0")
-button_frame.pack(pady=5)
+# Label kết quả cảm xúc
+result_label = tk.Label(root, text="Chưa có kết quả", font=("Arial", 14), bg="#f0f0f0")
+result_label.pack(pady=10)
 
-play_button = tk.Button(button_frame, text="Play Audio", command=play_audio, font=("Arial", 12), bg="#2196F3", fg="white", relief="flat", padx=15, pady=8, state='disabled')
-play_button.pack(side=tk.LEFT, padx=5)
-
-stop_button = tk.Button(button_frame, text="Stop Audio", command=stop_audio, font=("Arial", 12), bg="#F44336", fg="white", relief="flat", padx=15, pady=8, state='disabled')
-stop_button.pack(side=tk.LEFT, padx=5)
-
-result_label = tk.Label(root, text="Chưa có kết quả", font=("Arial", 12), bg="#f0f0f0")
-result_label.pack(pady=8)
-
-progress_label = tk.Label(root, text="Playing: 0.0s", font=("Arial", 10), bg="#f0f0f0")
-progress_label.pack(pady=5)
-
+# Label hình ảnh biểu đồ
 image_label = tk.Label(root, bg="#f0f0f0")
-image_label.pack(pady=8, expand=True)
+image_label.pack(pady=10)
 
-root.bind("<Configure>", resize_image)
-root.protocol("WM_DELETE_WINDOW", on_closing)  # Gắn sự kiện đóng cửa sổ
+# Nút play và stop âm thanh
+control_frame = tk.Frame(root, bg="#f0f0f0")
+control_frame.pack(pady=10)
 
+play_button = tk.Button(control_frame, text="▶️ Phát Âm Thanh", command=play_audio, **style, state='disabled')
+play_button.grid(row=0, column=0, padx=10)
+
+stop_button = tk.Button(control_frame, text="⏹ Dừng Lại", command=stop_audio, **style, state='disabled')
+stop_button.grid(row=0, column=1, padx=10)
+
+# Label hiển thị thời gian phát âm thanh
+progress_label = tk.Label(root, text="Playing: 0.0s", font=("Arial", 12), bg="#f0f0f0")
+progress_label.pack(pady=5)
+# Thanh Progress
+progress_bar = ttk.Progressbar(root, orient='horizontal', length=400, mode='determinate')
+progress_bar.pack(pady=5)
+
+
+
+# Lắng nghe sự kiện resize
+root.bind('<Configure>', resize_image)
+
+# Lắng nghe sự kiện đóng app
+root.protocol("WM_DELETE_WINDOW", on_closing)
+
+# Bắt đầu vòng lặp giao diện
 root.mainloop()
