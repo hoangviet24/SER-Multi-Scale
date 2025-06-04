@@ -10,7 +10,6 @@ from pydub.exceptions import CouldntDecodeError
 import tempfile
 import uuid
 import logging
-import torchaudio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -80,46 +79,8 @@ def extract_mfcc_with_cache(file_path, sr=16000, n_mfcc=40, max_len=100, cache_d
         if temp_file and os.path.exists(temp_file):
             os.remove(temp_file)
 
-def extract_wav2vec_features(file_path, processor, model, device, max_len=100, cache_dir="./wav2vec_cache"):
-    file_path = os.path.abspath(file_path)
-    cache_dir = os.path.abspath(cache_dir)
-    cache_filename = os.path.basename(file_path).replace(os.sep, "_").replace(".", "_") + ".npy"
-    cache_path = os.path.join(cache_dir, cache_filename)
-
-    if os.path.exists(cache_path):
-        return np.load(cache_path)
-
-    try:
-        wav_file = convert_to_wav(file_path)
-        waveform, sample_rate = torchaudio.load(wav_file)
-        if sample_rate != 16000:
-            resampler = torchaudio.transforms.Resample(sample_rate, 16000)
-            waveform = resampler(waveform)
-        waveform = waveform.squeeze().to(device)
-
-        inputs = processor(waveform, sampling_rate=16000, return_tensors="pt", padding=True)
-        inputs = {key: val.to(device) for key, val in inputs.items()}
-
-        with torch.no_grad():
-            outputs = model(**inputs)
-        features = outputs.last_hidden_state.squeeze(0).cpu().numpy()
-
-        if features.shape[0] > max_len:
-            features = features[:max_len, :]
-        else:
-            features = np.pad(features, ((0, max_len - features.shape[0]), (0, 0)), mode='constant')
-
-        os.makedirs(cache_dir, exist_ok=True)
-        np.save(cache_path, features)
-        return features
-    except Exception as e:
-        raise ValueError(f"Error processing {file_path} with wav2vec: {str(e)}")
-
 class EmotionAudioDataset(torch.utils.data.Dataset):
-    def __init__(self, root_dir, max_len=100, use_wav2vec=False, processor=None, wav2vec_model=None):
-        self.use_wav2vec = use_wav2vec
-        self.processor = processor
-        self.wav2vec_model = wav2vec_model
+    def __init__(self, root_dir, max_len=100):
         self.samples = []
         self.label_map = {}
         for label in sorted(os.listdir(root_dir)):
@@ -147,10 +108,7 @@ class EmotionAudioDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         path, label = self.samples[idx]
-        if self.use_wav2vec:
-            x = extract_wav2vec_features(path, self.processor, self.wav2vec_model, torch.device('cuda'), max_len=self.max_len)
-        else:
-            x = extract_mfcc_with_cache(path, max_len=self.max_len)
+        x = extract_mfcc_with_cache(path, max_len=self.max_len)
         return torch.tensor(x, dtype=torch.float32), torch.tensor(label)
 
 class MultiScaleTemporalOperator(nn.Module):

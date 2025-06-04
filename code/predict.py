@@ -3,20 +3,16 @@ import torch.nn.functional as F
 import os
 import matplotlib.pyplot as plt
 import sys
-from utils import extract_mfcc_with_cache, extract_wav2vec_features, MSTRModel, EmotionAudioDataset
+from utils import MSTRModel, extract_mfcc_with_cache, EmotionAudioDataset
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def predict_emotion(file_path, model, label_map, device, processor=None, wav2vec_model=None, max_len=100, confidence_threshold=50, cache_dir="./mfcc_cache"):
+def predict_emotion(file_path, model, label_map, device, max_len=100, confidence_threshold=50, cache_dir="./mfcc_cache"):
     model.eval()
     file_path = os.path.abspath(file_path)
-    use_wav2vec = processor is not None and wav2vec_model is not None
-    if use_wav2vec:
-        x = extract_wav2vec_features(file_path, processor, wav2vec_model, device, max_len=max_len, cache_dir=cache_dir)
-    else:
-        x = extract_mfcc_with_cache(file_path, max_len=max_len, cache_dir=cache_dir)
+    x = extract_mfcc_with_cache(file_path, max_len=max_len, cache_dir=cache_dir)
     if x.sum() == 0:
         raise ValueError(f"Failed to extract audio from {file_path}. Ensure file has valid audio track")
     
@@ -64,32 +60,21 @@ def predict_emotion(file_path, model, label_map, device, processor=None, wav2vec
 
 if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    use_wav2vec = torch.cuda.is_available()
-    processor = None
-    wav2vec_model = None
-    if use_wav2vec:
-        try:
-            from transformers import Wav2Vec2Processor, Wav2Vec2Model
-            processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
-            wav2vec_model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h").to(device)
-        except ImportError:
-            logging.warning("Thư viện transformers không được cài đặt. Chuyển về MFCC.")
-            use_wav2vec = False
     
-    dataset = EmotionAudioDataset('./merged_dataset', max_len=100, use_wav2vec=use_wav2vec, processor=processor, wav2vec_model=wav2vec_model)
+    dataset = EmotionAudioDataset('./TESS', max_len=100)
     if len(dataset) == 0:
         logger.error("No data found. Exiting.")
         exit()
     
     model = MSTRModel(
-        input_dim=768 if use_wav2vec else 40,
+        input_dim=40,
         num_classes=len(dataset.label_map),
         num_scales=3,
         window_size=4,
         num_heads=4
     ).to(device)
     
-    checkpoint_path = './models/best_model_wav2vec.pth' if use_wav2vec else './models/best_model_mfcc.pth'
+    checkpoint_path = './models/best_model_mfcc.pth'
     if os.path.exists(checkpoint_path):
         try:
             model.load_state_dict(torch.load(checkpoint_path, map_location=device))
@@ -105,8 +90,8 @@ if __name__ == '__main__':
     if os.path.exists(file_path):
         try:
             predicted_emotion, confidence = predict_emotion(
-                file_path, model, dataset.label_map, device, processor=processor, wav2vec_model=wav2vec_model,
-                cache_dir="./wav2vec_cache" if use_wav2vec else "./mfcc_cache"
+                file_path, model, dataset.label_map, device,
+                cache_dir="./mfcc_cache"
             )
             logger.info(f"Predicted emotion for {file_path}: {predicted_emotion} with confidence {confidence:.2f}%")
         except ValueError as e:

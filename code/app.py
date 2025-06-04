@@ -12,27 +12,6 @@ from utils import convert_to_wav
 import logging
 import shutil
 import wave
-from transformers import Wav2Vec2Processor
-# Kiểm tra CUDA và khởi tạo wav2vec nếu có
-use_wav2vec = torch.cuda.is_available()
-processor = None
-wav2vec_model = None
-if use_wav2vec:
-    try:
-        from transformers import Wav2Vec2Processor, Wav2Vec2Model
-        processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
-        wav2vec_model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
-    except ImportError:
-        logging.warning("Thư viện transformers không được cài đặt. Chuyển về MFCC.")
-        use_wav2vec = False
-
-def get_audio_length(file_path):
-    with wave.open(file_path, 'rb') as wf:
-        frames = wf.getnframes()
-        rate = wf.getframerate()
-        duration = frames / float(rate)
-    return duration
-
 
 # Thiết lập logging
 logging.basicConfig(level=logging.INFO)
@@ -44,21 +23,21 @@ except pygame.error as e:
     logger.error(f"pygame mixer init failed: {e}")
     pygame.mixer = None
 
-device = torch.device('cuda' if use_wav2vec else 'cpu')
-dataset_merged_dataset = EmotionAudioDataset('./merged_dataset', max_len=100, use_wav2vec=use_wav2vec, processor=processor, wav2vec_model=wav2vec_model)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+dataset = EmotionAudioDataset('./TESS', max_len=100)
 
-model_merged_dataset = MSTRModel(
-    input_dim=768 if use_wav2vec else 40,
-    num_classes=len(dataset_merged_dataset.label_map),
+model = MSTRModel(
+    input_dim=40,
+    num_classes=len(dataset.label_map),
     num_scales=3,
     window_size=4,
     num_heads=4
 ).to(device)
 
 try:
-    model_path = './models/best_model_wav2vec.pth' if use_wav2vec else './models/best_model_mfcc.pth'
+    model_path = './models/best_model_mfcc.pth'
     if os.path.exists(model_path):
-        model_merged_dataset.load_state_dict(torch.load(model_path, map_location=device))
+        model.load_state_dict(torch.load(model_path, map_location=device))
         logger.info(f"Loaded model from {model_path}")
     else:
         messagebox.showwarning("Cảnh báo", f"Không tìm thấy mô hình tại {model_path}. Sẽ dùng mặc định.")
@@ -66,19 +45,26 @@ except Exception as e:
     messagebox.showerror("Lỗi", f"Không thể tải mô hình: {str(e)}")
     raise
 
+def get_audio_length(file_path):
+    with wave.open(file_path, 'rb') as wf:
+        frames = wf.getnframes()
+        rate = wf.getframerate()
+        duration = frames / float(rate)
+    return duration
+
 # Tạo cửa sổ chính
 root = tk.Tk()
 
 # Biến toàn cục
 original_img = None
 current_photo = None
-last_valid_size = (800, 650)
+last_valid_size = (1065, 883)
 current_audio_file = None
 processed_audio = None
 last_resize_time = 0
 resize_cooldown = 0.4
 last_image_size = (0, 0)
-selected_model = tk.StringVar(value="merged_dataset")
+selected_model = tk.StringVar(value="TESS")
 
 # Add a label to display the selected file name
 file_name_label = tk.Label(root, text="No file selected", font=("Arial", 12), bg="#f0f0f0")
@@ -139,7 +125,7 @@ def upload_file():
     
     # Update the file name label
     file_name = os.path.basename(file_path)
-    file_name_label.config(text=f"Selected file: {file_name}")
+    file_name_label.config(text=f"Tên file: {file_name}")
     
     temp_dir = os.path.abspath("./temp")
     os.makedirs(temp_dir, exist_ok=True)
@@ -162,18 +148,14 @@ def upload_file():
             processed_audio = convert_to_wav(current_audio_file, temp_dir=temp_dir)
             audio_length = get_audio_length(processed_audio)
             root.after(0, lambda: progress_bar.config(maximum=audio_length))
-            model = model_merged_dataset
-            dataset = dataset_merged_dataset
             predicted_emotion, confidence = predict_emotion(
                 processed_audio,
                 model,
                 dataset.label_map,
                 device,
-                processor=processor,
-                wav2vec_model=wav2vec_model,
                 max_len=100,
                 confidence_threshold=50,
-                cache_dir=os.path.abspath("./app_wav2vec_cache" if use_wav2vec else "./app_mfcc_cache")
+                cache_dir=os.path.abspath("./app_mfcc_cache")
             )
             
             root.after(0, lambda: result_label.config(text=f"Cảm xúc: {predicted_emotion} ({confidence:.2f}%)", font=("Arial", 14, "bold")))
@@ -306,7 +288,6 @@ def save_image():
         except Exception as e:
             messagebox.showerror("Lỗi", f"Không thể lưu hình ảnh: {str(e)}")
 
-
 root.title("Nhận Diện Cảm Xúc Qua Giọng Nói")
 root.geometry("600x400")
 root.configure(bg="#f0f0f0")
@@ -323,7 +304,7 @@ scrollable_frame.bind(
 )
 
 main_canvas.create_window((0, 0), window=scrollable_frame, anchor="n", tags="frame")
-#main_canvas.configure(yscrollcommand=scrollbar.set)
+main_canvas.configure(yscrollcommand=scrollbar.set)
 
 main_canvas.pack(side="left", fill="both", expand=True)
 scrollbar.pack(side="right", fill="y")
